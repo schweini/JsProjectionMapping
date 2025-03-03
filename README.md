@@ -10,3 +10,7 @@ What I can't get it to do, because of context-window limits, is to
 "in the polygons context menu, please add an option to make the polygons edges dither to the background color. let me choose how many pixels wide this dithering or feathering area should be.
 also, please let me choose the gradient start and end colors. 
 seperate the code in a couple of different files. please give me the content of the first file."
+
+USAGE:
+
+press "SHIFT" to see UI buttons, and draw polygons.

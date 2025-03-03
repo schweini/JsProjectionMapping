@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Light Projection Mapping Tool</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: black;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        .ui-container {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            z-index: 100;
+            display: none;
+        }
+        .ui-container button {
+            margin: 5px;
+            padding: 5px 10px;
+            background-color: #444;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        .ui-container button:hover {
+            background-color: #666;
+        }
+        .ui-container button.active {
+            background-color: #007bff;
+        }
+        .context-menu {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.8);
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 5px 0;
+            min-width: 150px;
+            z-index: 1000;
+            display: none;
+        }
+        .context-menu-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            color: white;
+        }
+        .context-menu-item:hover {
+            background-color: #333;
+        }
+        .color-picker-container {
+            position: absolute;
+            background-color: rgba(0, 0, 0, 0.8);
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 10px;
+            z-index: 1000;
+            display: none;
+        }
+        .color-picker-container label {
+            display: block;
+            margin-bottom: 5px;
+            color: white;
+        }
+        .gradient-options {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+
+    <div class="ui-container" id="uiContainer">
+        <div>
+            <button id="newPolygonBtn">New Polygon</button>
+            <button id="moveVertexBtn">Move Vertices</button>
+            <button id="addVertexBtn">Add Vertex</button>
+            <button id="deleteVertexBtn">Delete Vertex</button>
+            <button id="deletePolygonBtn">Delete Polygon</button>
+        </div>
+        <div style="margin-top: 10px;">
+            <button id="exportBtn">Export JSON</button>
+            <button id="importBtn">Import JSON</button>
+            <input type="file" id="importFile" accept=".json" style="display: none;">
+        </div>
+        <div id="status" style="margin-top: 10px; font-size: 12px;">Mode: None</div>
+    </div>
+
+    <div class="context-menu" id="contextMenu">
+        <div class="context-menu-item" id="setColorOption">Set Color</div>
+        <div class="context-menu-item" id="setGradientOption">Set Gradient</div>
+    </div>
+
+    <div class="color-picker-container" id="colorPickerContainer">
+        <label>Select Color:</label>
+        <input type="color" id="colorPicker">
+        <div class="gradient-options" id="gradientOptions" style="display: none;">
+            <label>Gradient Type:</label>
+            <select id="gradientType">
+                <option value="rainbow">Rainbow</option>
+                <option value="pulse">Pulse</option>
+                <option value="rotate">Rotating</option>
+            </select>
+            <label>Speed:</label>
+            <input type="range" id="gradientSpeed" min="1" max="10" value="5">
+        </div>
+        <button id="applyColorBtn" style="margin-top: 10px;">Apply</button>
+    </div>
+
+    <script>
+        // Main application
+        const app = {
+            canvas: null,
+            ctx: null,
+            width: 0,
+            height: 0,
+            polygons: [],
+            activePolygon: null,
+            selectedVertex: null,
+            uiVisible: false,
+            currentMode: 'none',
+            lastMousePos: { x: 0, y: 0 },
+            newPolygonPoints: [],
+            selectedPolygon: null,
+            gradients: {},
+            animationFrameId: null,
+
+            // Initialize the app
+            init() {
+                this.setupCanvas();
+                this.setupEventListeners();
+                this.startAnimationLoop();
+
+                // Hide UI by default
+                document.getElementById('uiContainer').style.display = 'none';
+            },
+
+            // Set up the canvas
+            setupCanvas() {
+                this.canvas = document.getElementById('canvas');
+                this.ctx = this.canvas.getContext('2d');
+                this.resizeCanvas();
+
+                window.addEventListener('resize', () => this.resizeCanvas());
+            },
+
+            // Resize canvas to window size
+            resizeCanvas() {
+                this.width = window.innerWidth;
+                this.height = window.innerHeight;
+                this.canvas.width = this.width;
+                this.canvas.height = this.height;
+            },
+
+            // Set up event listeners
+            setupEventListeners() {
+                // Mouse events
+                this.canvas.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+                this.canvas.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+                this.canvas.addEventListener('mouseup', () => this.handleMouseUp());
+                this.canvas.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    this.handleContextMenu(e);
+                });
+
+                // Keyboard events
+                window.addEventListener('keydown', (e) => this.handleKeyDown(e));
+                window.addEventListener('keyup', (e) => this.handleKeyUp(e));
+
+                // UI Button events
+                document.getElementById('newPolygonBtn').addEventListener('click', () => this.setMode('newPolygon'));
+                document.getElementById('moveVertexBtn').addEventListener('click', () => this.setMode('moveVertex'));
+                document.getElementById('addVertexBtn').addEventListener('click', () => this.setMode('addVertex'));
+                document.getElementById('deleteVertexBtn').addEventListener('click', () => this.setMode('deleteVertex'));
+                document.getElementById('deletePolygonBtn').addEventListener('click', () => this.setMode('deletePolygon'));
+                document.getElementById('exportBtn').addEventListener('click', () => this.exportJSON());
+                document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
+                document.getElementById('importFile').addEventListener('change', (e) => this.importJSON(e));
+
+                // Context menu
+                document.getElementById('setColorOption').addEventListener('click', () => {
+                    document.getElementById('colorPickerContainer').style.display = 'block';
+                    document.getElementById('gradientOptions').style.display = 'none';
+                    document.getElementById('contextMenu').style.display = 'none';
+                });
+
+                document.getElementById('setGradientOption').addEventListener('click', () => {
+                    document.getElementById('colorPickerContainer').style.display = 'block';
+                    document.getElementById('gradientOptions').style.display = 'block';
+                    document.getElementById('contextMenu').style.display = 'none';
+                });
+
+                document.getElementById('applyColorBtn').addEventListener('click', () => {
+                    if (this.selectedPolygon !== null) {
+                        if (document.getElementById('gradientOptions').style.display === 'block') {
+                            // Apply gradient
+                            const type = document.getElementById('gradientType').value;
+                            const speed = document.getElementById('gradientSpeed').value;
+
+                            this.polygons[this.selectedPolygon].fill = 'gradient';
+                            this.polygons[this.selectedPolygon].gradientType = type;
+                            this.polygons[this.selectedPolygon].gradientSpeed = speed;
+                        } else {
+                            // Apply solid color
+                            const color = document.getElementById('colorPicker').value;
+                            this.polygons[this.selectedPolygon].fill = color;
+                        }
+                    }
+                    document.getElementById('colorPickerContainer').style.display = 'none';
+                });
+
+                // Close context menus when clicking outside
+                document.addEventListener('click', (e) => {
+                    if (!document.getElementById('contextMenu').contains(e.target) &&
+                        !document.getElementById('colorPickerContainer').contains(e.target)) {
+                        document.getElementById('contextMenu').style.display = 'none';
+                        document.getElementById('colorPickerContainer').style.display = 'none';
+                    }
+                });
+            },
+
+            // Set the current mode
+            setMode(mode) {
+                this.currentMode = mode;
+                document.getElementById('status').textContent = `Mode: ${mode}`;
+
+                // Clear active states
+                document.querySelectorAll('button').forEach(btn => btn.classList.remove('active'));
+
+                // Set active button
+                switch(mode) {
+                    case 'newPolygon':
+                        document.getElementById('newPolygonBtn').classList.add('active');
+                        this.newPolygonPoints = [];
+                        break;
+                    case 'moveVertex':
+                        document.getElementById('moveVertexBtn').classList.add('active');
+                        break;
+                    case 'addVertex':
+                        document.getElementById('addVertexBtn').classList.add('active');
+                        break;
+                    case 'deleteVertex':
+                        document.getElementById('deleteVertexBtn').classList.add('active');
+                        break;
+                    case 'deletePolygon':
+                        document.getElementById('deletePolygonBtn').classList.add('active');
+                        break;
+                }
+            },
+
+            // Handle mouse down event
+            handleMouseDown(e) {
+                const pos = { x: e.clientX, y: e.clientY };
+
+                if (e.button === 0) { // Left click
+                    switch(this.currentMode) {
+                        case 'newPolygon':
+                            this.newPolygonPoints.push(pos);
+                            break;
+
+                        case 'moveVertex':
+                            const { polyIndex, vertexIndex } = this.findClosestVertex(pos);
+                            if (polyIndex !== -1 && vertexIndex !== -1) {
+                                this.activePolygon = polyIndex;
+                                this.selectedVertex = vertexIndex;
+                            }
+                            break;
+
+                        case 'addVertex':
+                            const polyToAddVertex = this.findPolygonAndEdge(pos);
+                            if (polyToAddVertex.polyIndex !== -1) {
+                                this.addVertexToEdge(
+                                    polyToAddVertex.polyIndex,
+                                    polyToAddVertex.edgeStart,
+                                    polyToAddVertex.edgeEnd,
+                                    pos
+                                );
+                            }
+                            break;
+
+                        case 'deleteVertex':
+                            const vertexToDelete = this.findClosestVertex(pos);
+                            if (vertexToDelete.polyIndex !== -1 && vertexToDelete.vertexIndex !== -1) {
+                                if (this.polygons[vertexToDelete.polyIndex].vertices.length > 3) {
+                                    this.polygons[vertexToDelete.polyIndex].vertices.splice(
+                                        vertexToDelete.vertexIndex, 1
+                                    );
+                                }
+                            }
+                            break;
+
+                        case 'deletePolygon':
+                            const polyToDelete = this.findPolygonContaining(pos);
+                            if (polyToDelete !== -1) {
+                                this.polygons.splice(polyToDelete, 1);
+                            }
+                            break;
+                    }
+                }
+                this.lastMousePos = pos;
+            },
+
+            // Handle mouse move event
+            handleMouseMove(e) {
+                const pos = { x: e.clientX, y: e.clientY };
+
+                if (this.activePolygon !== null && this.selectedVertex !== null) {
+                    this.polygons[this.activePolygon].vertices[this.selectedVertex] = pos;
+                }
+
+                this.lastMousePos = pos;
+            },
+
+            // Handle mouse up event
+            handleMouseUp() {
+                if (this.currentMode === 'newPolygon' && this.newPolygonPoints.length >= 3) {
+                    // Check if the user clicked near the first point to close the polygon
+                    const firstPoint = this.newPolygonPoints[0];
+                    const lastPoint = this.lastMousePos;
+
+                    const distance = Math.sqrt(
+                        Math.pow(firstPoint.x - lastPoint.x, 2) +
+                        Math.pow(firstPoint.y - lastPoint.y, 2)
+                    );
+
+                    if (distance < 20 && this.newPolygonPoints.length >= 3) {
+                        this.createPolygon();
+                    }
+                }
+
+                this.activePolygon = null;
+                this.selectedVertex = null;
+            },
+
+            // Handle context menu (right click)
+            handleContextMenu(e) {
+                const pos = { x: e.clientX, y: e.clientY };
+                const polygonIndex = this.findPolygonContaining(pos);
+
+                if (polygonIndex !== -1) {
+                    this.selectedPolygon = polygonIndex;
+
+                    // Show context menu
+                    const contextMenu = document.getElementById('contextMenu');
+                    contextMenu.style.left = `${pos.x}px`;
+                    contextMenu.style.top = `${pos.y}px`;
+                    contextMenu.style.display = 'block';
+                }
+            },
+
+            // Handle keyboard events
+            handleKeyDown(e) {
+                if (e.key === 'Shift') {
+                    document.getElementById('uiContainer').style.display = 'block';
+                    this.uiVisible = true;
+                }
+
+                // Press Enter to finish polygon
+                if (e.key === 'Enter' && this.currentMode === 'newPolygon' && this.newPolygonPoints.length >= 3) {
+                    this.createPolygon();
+                }
+
+                // Press Escape to cancel polygon creation
+                if (e.key === 'Escape' && this.currentMode === 'newPolygon') {
+                    this.newPolygonPoints = [];
+                }
+            },
+
+            handleKeyUp(e) {
+                if (e.key === 'Shift') {
+                    document.getElementById('uiContainer').style.display = 'none';
+                    document.getElementById('contextMenu').style.display = 'none';
+                    document.getElementById('colorPickerContainer').style.display = 'none';
+                    this.uiVisible = false;
+                }
+            },
+
+            // Create a new polygon from the collected points
+            createPolygon() {
+                this.polygons.push({
+                    vertices: [...this.newPolygonPoints],
+                    fill: '#ffffff',
+                    gradientType: 'rainbow',
+                    gradientSpeed: 5
+                });
+
+                this.newPolygonPoints = [];
+            },
+
+            // Find the closest vertex to a point
+            findClosestVertex(point) {
+                let closestDist = 20; // Threshold distance
+                let polyIndex = -1;
+                let vertexIndex = -1;
+
+                this.polygons.forEach((polygon, pIndex) => {
+                    polygon.vertices.forEach((vertex, vIndex) => {
+                        const dist = Math.sqrt(
+                            Math.pow(vertex.x - point.x, 2) +
+                            Math.pow(vertex.y - point.y, 2)
+                        );
+
+                        if (dist < closestDist) {
+                            closestDist = dist;
+                            polyIndex = pIndex;
+                            vertexIndex = vIndex;
+                        }
+                    });
+                });
+
+                return { polyIndex, vertexIndex };
+            },
+
+            // Find polygon containing a point
+            findPolygonContaining(point) {
+                for (let i = this.polygons.length - 1; i >= 0; i--) {
+                    if (this.isPointInPolygon(point, this.polygons[i].vertices)) {
+                        return i;
+                    }
+                }
+                return -1;
+            },
+
+            // Check if a point is inside a polygon
+            isPointInPolygon(point, vertices) {
+                let inside = false;
+                for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+                    const xi = vertices[i].x, yi = vertices[i].y;
+                    const xj = vertices[j].x, yj = vertices[j].y;
+
+                    const intersect = ((yi > point.y) !== (yj > point.y))
+                        && (point.x < (xj - xi) * (point.y - yi) / (yj - yi) + xi);
+                    if (intersect) inside = !inside;
+                }
+                return inside;
+            },
+
+            // Find closest edge of polygon to a point
+            findPolygonAndEdge(point) {
+                let closestDist = 20; // Threshold distance
+                let polyIndex = -1;
+                let edgeStart = -1;
+                let edgeEnd = -1;
+
+                this.polygons.forEach((polygon, pIndex) => {
+                    const vertices = polygon.vertices;
+
+                    for (let i = 0; i < vertices.length; i++) {
+                        const v1 = vertices[i];
+                        const v2 = vertices[(i + 1) % vertices.length];
+
+                        const dist = this.distanceToLine(point, v1, v2);
+
+                        if (dist < closestDist) {
+                            closestDist = dist;
+                            polyIndex = pIndex;
+                            edgeStart = i;
+                            edgeEnd = (i + 1) % vertices.length;
+                        }
+                    }
+                });
+
+                return { polyIndex, edgeStart, edgeEnd };
+            },
+
+            // Calculate distance from point to line segment
+            distanceToLine(point, lineStart, lineEnd) {
+                const A = point.x - lineStart.x;
+                const B = point.y - lineStart.y;
+                const C = lineEnd.x - lineStart.x;
+                const D = lineEnd.y - lineStart.y;
+
+                const dot = A * C + B * D;
+                const lenSq = C * C + D * D;
+                let param = -1;
+
+                if (lenSq !== 0) param = dot / lenSq;
+
+                let xx, yy;
+
+                if (param < 0) {
+                    xx = lineStart.x;
+                    yy = lineStart.y;
+                } else if (param > 1) {
+                    xx = lineEnd.x;
+                    yy = lineEnd.y;
+                } else {
+                    xx = lineStart.x + param * C;
+                    yy = lineStart.y + param * D;
+                }
+
+                const dx = point.x - xx;
+                const dy = point.y - yy;
+
+                return Math.sqrt(dx * dx + dy * dy);
+            },
+
+            // Add a vertex to an edge
+            addVertexToEdge(polyIndex, startIndex, endIndex, newVertex) {
+                const vertices = this.polygons[polyIndex].vertices;
+
+                // Insert new vertex
+                if (endIndex === 0) {
+                    vertices.push(newVertex);
+                } else {
+                    vertices.splice(endIndex, 0, newVertex);
+                }
+            },
+
+            // Export polygons to JSON
+            exportJSON() {
+                const data = JSON.stringify(this.polygons);
+                const blob = new Blob([data], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'polygons.json';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            },
+
+            // Import polygons from JSON
+            importJSON(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const data = JSON.parse(event.target.result);
+                        this.polygons = data;
+                    } catch (error) {
+                        console.error('Error parsing JSON:', error);
+                    }
+                };
+                reader.readAsText(file);
+            },
+
+            // Animation loop
+            startAnimationLoop() {
+                const animate = () => {
+                    this.draw();
+                    this.animationFrameId = requestAnimationFrame(animate);
+                };
+                animate();
+            },
+
+            // Draw everything
+            draw() {
+                this.ctx.clearRect(0, 0, this.width, this.height);
+
+                // Draw existing polygons
+                this.polygons.forEach((polygon, index) => {
+                    this.drawPolygon(polygon, index);
+                });
+
+                // Draw polygon in progress
+                if (this.newPolygonPoints.length > 0) {
+                    this.drawPolygonInProgress();
+                }
+            },
+
+            // Draw an existing polygon
+            drawPolygon(polygon, index) {
+                const vertices = polygon.vertices;
+                if (vertices.length < 3) return;
+
+                this.ctx.beginPath();
+                this.ctx.moveTo(vertices[0].x, vertices[0].y);
+
+                for (let i = 1; i < vertices.length; i++) {
+                    this.ctx.lineTo(vertices[i].x, vertices[i].y);
+                }
+
+                this.ctx.closePath();
+
+                // Calculate center of polygon for gradient
+                let centerX = 0, centerY = 0;
+                for (const vertex of vertices) {
+                    centerX += vertex.x;
+                    centerY += vertex.y;
+                }
+                centerX /= vertices.length;
+                centerY /= vertices.length;
+
+                // Apply fill
+                if (polygon.fill === 'gradient') {
+                    // Animated gradient
+                    const gradient = this.ctx.createRadialGradient(
+                        centerX, centerY, 0,
+                        centerX, centerY, this.getPolygonRadius(vertices, centerX, centerY)
+                    );
+
+                    // Calculate gradient colors based on animation
+                    const time = Date.now() / (1000 / polygon.gradientSpeed);
+
+                    if (polygon.gradientType === 'rainbow') {
+                        gradient.addColorStop(0, `hsl(${(time * 30) % 360}, 100%, 50%)`);
+                        gradient.addColorStop(1, `hsl(${(time * 30 + 180) % 360}, 100%, 50%)`);
+                    } else if (polygon.gradientType === 'pulse') {
+                        const brightness = 50 + Math.sin(time) * 25;
+                        gradient.addColorStop(0, `hsl(${(time * 10) % 360}, 100%, ${brightness}%)`);
+                        gradient.addColorStop(1, `hsl(${(time * 10 + 60) % 360}, 100%, ${brightness - 20}%)`);
+                    } else if (polygon.gradientType === 'rotate') {
+                        const angle1 = time % (Math.PI * 2);
+                        const angle2 = (time + Math.PI) % (Math.PI * 2);
+                        gradient.addColorStop(0, `hsl(${(time * 20) % 360}, 100%, 50%)`);
+                        gradient.addColorStop(0.5, `hsl(${(time * 20 + 120) % 360}, 100%, 50%)`);
+                        gradient.addColorStop(1, `hsl(${(time * 20 + 240) % 360}, 100%, 50%)`);
+                    }
+
+                    this.ctx.fillStyle = gradient;
+                } else {
+                    this.ctx.fillStyle = polygon.fill || '#ffffff';
+                }
+
+                this.ctx.fill();
+
+                // Draw polygon outline
+                this.ctx.strokeStyle = '#ffffff';
+                this.ctx.lineWidth = 1;
+                this.ctx.stroke();
+
+                // Draw vertices when UI is visible
+                if (this.uiVisible) {
+                    vertices.forEach((vertex, i) => {
+                        this.ctx.fillStyle = '#ff0000';
+                        this.ctx.beginPath();
+                        this.ctx.arc(vertex.x, vertex.y, 5, 0, Math.PI * 2);
+                        this.ctx.fill();
+                    });
+                }
+            },
+
+            // Calculate radius for gradient
+            getPolygonRadius(vertices, centerX, centerY) {
+                let maxDist = 0;
+                for (const vertex of vertices) {
+                    const dist = Math.sqrt(
+                        Math.pow(vertex.x - centerX, 2) +
+                        Math.pow(vertex.y - centerY, 2)
+                    );
+                    maxDist = Math.max(maxDist, dist);
+                }
+                return maxDist;
+            },
+
+            // Draw polygon currently being created
+            drawPolygonInProgress() {
+                const points = this.newPolygonPoints;
+                if (points.length === 0) return;
+
+                this.ctx.beginPath();
+                this.ctx.moveTo(points[0].x, points[0].y);
+
+                for (let i = 1; i < points.length; i++) {
+                    this.ctx.lineTo(points[i].x, points[i].y);
+                }
+
+                // Draw line to current mouse position
+                this.ctx.lineTo(this.lastMousePos.x, this.lastMousePos.y);
+
+                // If we have at least 3 points, draw line back to first point
+                if (points.length >= 2) {
+                    // Visual cue to show if polygon would close
+                    const dist = Math.sqrt(
+                        Math.pow(points[0].x - this.lastMousePos.x, 2) +
+                        Math.pow(points[0].y - this.lastMousePos.y, 2)
+                    );
+
+                    if (dist < 20) {
+                        this.ctx.lineTo(points[0].x, points[0].y);
+                        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+                        this.ctx.fill();
+                    }
+                }
+
+                this.ctx.strokeStyle = '#ffffff';
+                this.ctx.lineWidth = 1;
+                this.ctx.stroke();
+
+                // Draw points
+                points.forEach((point) => {
+                    this.ctx.fillStyle = '#ff0000';
+                    this.ctx.beginPath();
+                    this.ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+                    this.ctx.fill();
+                });
+
+                // Draw first point larger if close to it
+                if (points.length >= 3) {
+                    const dist = Math.sqrt(
+                        Math.pow(points[0].x - this.lastMousePos.x, 2) +
+                        Math.pow(points[0].y - this.lastMousePos.y, 2)
+                    );
+
+                    if (dist < 20) {
+                        this.ctx.fillStyle = '#ffff00';
+                        this.ctx.beginPath();
+                        this.ctx.arc(points[0].x, points[0].y, 8, 0, Math.PI * 2);
+                        this.ctx.fill();
+                    }
+                }
+            }
+        };
+
+        // Initialize the application once DOM is loaded
+        document.addEventListener('DOMContentLoaded', () => {
+            app.init();
+        });
+    </script>
+</body>
+</html>
